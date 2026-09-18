@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screening satellitare del verde stradale</title>
+
+<!-- ===================================================================
+     LA PAGINA DEL COMMITTENTE
+     18 settembre 2026
+
+     Si apre con il QR code stampato nel report: nessun accesso, nessuna
+     credenziale. L'indirizzo porta un codice, e quel codice e' l'unica
+     chiave.
+
+     COSA MOSTRA: le tratte CONFERMATE del progetto, con la frase di stato
+     e le celle sulla mappa. Nient'altro: niente configurazioni, niente
+     percorsi di file, niente note interne. Il filtro non e' qui — e' nella
+     funzione `visualizzatore_apri` sul server, che restituisce solo quello
+     che il codice permette.
+
+     DURA DODICI MESI e si puo' revocare. Chi ha il codice entra: e' un
+     segreto dentro l'indirizzo, non un accesso con credenziali. Se il
+     committente lo gira a qualcun altro, quello vede — e' materiale che gli
+     e' stato consegnato, ma va saputo.
+
+     NON E' L'ELABORATO. Le tavole fatte bene restano un lavoro a parte: qui
+     si guarda lo stato, si stampa una schermata, e per il resto c'e' il
+     report.
+     =================================================================== -->
+
+<style>
+  :root {
+    --verde: #2d6a4f; --bordo: #cfd8cf; --fondo: #f7f9f7;
+    --testo: #1f2a1f; --tenue: #6b7a6b; --rosso: #b03a2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--testo); background: var(--fondo);
+  }
+  header {
+    background: var(--verde); color: #fff; padding: 14px 18px;
+  }
+  header h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+  header p { margin: 4px 0 0; font-size: .85rem; opacity: .9; }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  #mappa {
+    height: 58vh; min-height: 380px; border: 1px solid var(--bordo);
+    border-radius: 8px; background: #e8ece8;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem;
+          margin-top: 16px; background: #fff; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid #eef0ee; text-align: left; }
+  th { background: #eef4ee; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  td.n, th.n { text-align: right; }
+  tr.scelta { background: #eef4ee; }
+  tbody tr { cursor: pointer; }
+  .scheda {
+    margin-top: 14px; padding: 12px 14px; background: #fff;
+    border: 1px solid var(--bordo); border-radius: 8px;
+  }
+  .nota { color: var(--tenue); font-size: .85rem; }
+  .avviso { color: var(--rosso); }
+  footer { padding: 14px 18px; color: var(--tenue); font-size: .82rem; }
+  .barra { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+           margin-bottom: 10px; }
+  button {
+    font: inherit; padding: 5px 12px; border: 1px solid var(--bordo);
+    background: #fff; border-radius: 6px; cursor: pointer;
+  }
+  button:hover { background: #eef4ee; }
+</style>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+
+<header>
+  <h1>Screening satellitare del verde stradale</h1>
+  <p id="sottotitolo">Caricamento…</p>
+</header>
+
+<main>
+  <div id="corpo"></div>
+</main>
+
+<footer>
+  <p id="piede"></p>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* L'indirizzo del database. Cambiandolo si cambia dove la pagina guarda,
+     senza toccare altro. */
+  var SERVER = 'https://qjrqtyrhmimmcfgkftuw.supabase.co';
+  /* La chiave PUBBLICA di sola lettura. Non e' un segreto: da sola non
+     permette nulla: le regole del database consentono soltanto la chiamata
+     a `visualizzatore_apri`, che a sua volta chiede un codice valido.
+     Il segreto vero e' il CODICE del QR, che sta nell'indirizzo. */
+  var CHIAVE = 'sb_publishable_52-lKbdO7ri81KzKJslmaA_vBjy5iRL';
+
+  var dati = null, mappa = null, strati = [], scelta = null;
+  var ordine = 'senza_chioma', discendente = true;
+
+  function el(id) { return document.getElementById(id); }
+
+  function codice() {
+    var m = location.search.match(/[?&]c=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  async function apri() {
+    var c = codice();
+    if (!c) { errore('Collegamento incompleto: manca il codice.'); return; }
+    try {
+      var r = await fetch(SERVER + '/rest/v1/rpc/visualizzatore_apri', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json',
+                   'apikey': CHIAVE, 'Authorization': 'Bearer ' + CHIAVE },
+        body: JSON.stringify({ p_codice: c })
+      });
+      if (!r.ok) { errore('Il collegamento non ha risposto.'); return; }
+      dati = await r.json();
+    } catch (e) {
+      errore('Il collegamento non ha risposto.'); return;
+    }
+
+    if (!dati || !dati.valido) {
+      errore('Questo collegamento non è più valido. ' +
+             'I collegamenti durano dodici mesi e possono essere revocati.');
+      return;
+    }
+    disegna();
+  }
+
+  function errore(t) {
+    el('sottotitolo').textContent = '';
+    el('corpo').innerHTML = '<p class="avviso">' + t + '</p>';
+  }
+
+  function disegna() {
+    var scade = dati.valido_fino ? new Date(dati.valido_fino) : null;
+    el('sottotitolo').textContent =
+      dati.tratte.length + ' tratte' +
+      (scade ? ' · collegamento valido fino al ' +
+        ('0'+scade.getDate()).slice(-2) + '/' +
+        ('0'+(scade.getMonth()+1)).slice(-2) + '/' + scade.getFullYear() : '');
+
+    el('corpo').innerHTML =
+      '<div class="barra"><button id="stampa">Stampa questa schermata</button>' +
+      '<span class="nota">Le tavole complete fanno parte del report.</span></div>' +
+      '<div id="mappa"></div>' +
+      '<div id="tabella"></div>' +
+      '<div id="scheda"></div>';
+    el('stampa').addEventListener('click', function () { window.print(); });
+
+    el('piede').innerHTML =
+      (dati.avvertenza || '') +
+      '<br>Ortofoto AgEA · Catasto © Agenzia delle Entrate CC BY 4.0 · ' +
+      'Immagini Copernicus Sentinel-2.';
+
+    mappaSu();
+    tabella();
+  }
+
+  function mappaSu() {
+    mappa = L.map('mappa');
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' +
+      'World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 20, attribution: 'Esri' }).addTo(mappa);
+    mappa.setView([41.6, 12.9], 10);
+    celle();
+  }
+
+  /* I colori sono quelli delle classi del gradino, gli stessi che usa chi
+     ha fatto il lavoro: un colore che cambia significato fra due schermate
+     e' peggio di nessun colore. */
+  function colore(cl) {
+    if (cl === 5) return '#5b1a12';
+    if (cl === 1) return '#c0392b';
+    if (cl === 2) return '#e67e22';
+    if (cl === 3) return '#f1c40f';
+    return '#27ae60';
+  }
+  function nomeClasse(cl) {
+    if (cl === 5) return 'chioma assente';
+    if (cl === 1) return 'perso molto, ancora in calo';
+    if (cl === 2) return 'perso molto, ora fermo';
+    if (cl === 3) return 'perso poco';
+    if (cl === 4) return 'stabile';
+    return '—';
+  }
+
+  function celle() {
+    strati.forEach(function (s) { mappa.removeLayer(s); });
+    strati = [];
+    var tutti = null;
+    dati.tratte.forEach(function (t) {
+      var g = t.celle_geo;
+      if (!g || !g.features || !g.features.length) return;
+      var s = L.geoJSON(g, {
+        style: function (f) {
+          var cl = Number(f.properties && f.properties.classe);
+          return { color: colore(cl), weight: 0, fillOpacity: 0.55 };
+        },
+        onEachFeature: function (f, l) {
+          var cl = Number(f.properties && f.properties.classe);
+          l.bindPopup('<strong>' + t.tratta + '</strong><br>' + nomeClasse(cl));
+        }
+      }).addTo(mappa);
+      strati.push(s);
+      t._confini = s.getBounds();
+      tutti = tutti ? tutti.extend(s.getBounds()) : L.latLngBounds(s.getBounds());
+    });
+    if (tutti && tutti.isValid()) mappa.fitBounds(tutti, { padding: [20, 20] });
+    setTimeout(function () { mappa.invalidateSize(); }, 200);
+  }
+
+  var COLONNE = [
+    ['tratta', 'tratta', false],
+    ['comune', 'comune', false],
+    ['celle', 'celle valutate', true],
+    ['in_calo', 'in calo', true],
+    ['senza_chioma', 'chioma assente', true],
+    ['anno_rottura', 'anno', true]
+  ];
+
+  function tabella() {
+    var r = dati.tratte.slice().sort(function (a, b) {
+      var x = a[ordine], y = b[ordine];
+      if (typeof x === 'string') return discendente ? String(y).localeCompare(x)
+                                                    : String(x).localeCompare(y);
+      return discendente ? (y - x) : (x - y);
+    });
+    var h = '<table><thead><tr>';
+    COLONNE.forEach(function (c) {
+      h += '<th data-k="' + c[0] + '"' + (c[2] ? ' class="n"' : '') + '>' + c[1] +
+           (ordine === c[0] ? (discendente ? ' ▼' : ' ▲') : '') + '</th>';
+    });
+    h += '</tr></thead><tbody>';
+    r.forEach(function (t) {
+      h += '<tr data-t="' + t.tratta + '"' +
+           (scelta === t.tratta ? ' class="scelta"' : '') + '>' +
+           '<td>' + t.tratta + '</td><td>' + (t.comune || '') + '</td>' +
+           '<td class="n">' + t.celle + '</td>' +
+           '<td class="n">' + t.in_calo + '</td>' +
+           '<td class="n">' + t.senza_chioma + '</td>' +
+           '<td class="n">' + (t.anno_rottura || '—') + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    el('tabella').innerHTML = h;
+
+    Array.prototype.forEach.call(el('tabella').querySelectorAll('th[data-k]'), function (th) {
+      th.addEventListener('click', function () {
+        var k = th.getAttribute('data-k');
+        if (ordine === k) discendente = !discendente;
+        else { ordine = k; discendente = true; }
+        tabella();
+      });
+    });
+    Array.prototype.forEach.call(el('tabella').querySelectorAll('tr[data-t]'), function (tr) {
+      tr.addEventListener('click', function () {
+        scelta = tr.getAttribute('data-t');
+        tabella(); scheda();
+      });
+    });
+  }
+
+  function scheda() {
+    var t = dati.tratte.filter(function (x) { return x.tratta === scelta; })[0];
+    if (!t) { el('scheda').innerHTML = ''; return; }
+    el('scheda').innerHTML =
+      '<div class="scheda"><p style="margin:0 0 6px"><strong>' + t.tratta +
+      '</strong> <span class="nota">' + (t.comune || '') + '</span></p>' +
+      (t.stato ? '<p style="margin:6px 0">' + t.stato + '</p>' : '') +
+      '<p class="nota" style="margin:6px 0 0">' + t.celle +
+      ' celle valutate · ' + t.in_calo + ' ancora in calo · ' +
+      t.senza_chioma + ' con chioma assente</p></div>';
+    if (t._confini && t._confini.isValid()) {
+      mappa.fitBounds(t._confini, { padding: [30, 30] });
+    }
+  }
+
+  apri();
+})();
+</script>
+</body>
+</html>
