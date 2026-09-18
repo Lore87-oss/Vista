@@ -173,7 +173,28 @@
       'World_Imagery/MapServer/tile/{z}/{y}/{x}',
       { maxZoom: 20, attribution: 'Esri' }).addTo(mappa);
     mappa.setView([41.6, 12.9], 10);
+
+    /* le coordinate sotto il puntatore, in un angolo */
+    var spia = L.control({ position: 'bottomleft' });
+    spia.onAdd = function () {
+      var d = L.DomUtil.create('div');
+      d.style.cssText = 'background:rgba(255,255,255,.85);padding:2px 8px;' +
+        'border-radius:4px;font:12px monospace;color:#1f2a1f';
+      d.innerHTML = '&nbsp;';
+      this._d = d; return d;
+    };
+    spia.addTo(mappa);
+    mappa.on('mousemove', function (ev) {
+      spia._d.innerHTML = ev.latlng.lat.toFixed(6) + ', ' + ev.latlng.lng.toFixed(6);
+    });
+
+    /* DA LONTANO LE CELLE SPARISCONO: sono da dieci metri, e a scala
+       regionale non si vede piu' niente. Sotto lo zoom 13 al loro posto
+       compare una linea per tratta, colorata per gravita': cosi' si vede
+       dove stanno e come stanno, e ingrandendo tornano le celle. */
+    mappa.on('zoomend', scala);
     celle();
+    scala();
   }
 
   /* I colori sono quelli delle classi del gradino, gli stessi che usa chi
@@ -209,7 +230,20 @@
         },
         onEachFeature: function (f, l) {
           var cl = Number(f.properties && f.properties.classe);
-          l.bindPopup('<strong>' + t.tratta + '</strong><br>' + nomeClasse(cl));
+          /* le coordinate servono per andarci: si copiano con un clic e si
+             aprono direttamente su Street View */
+          l.on('click', function (ev) {
+            var q = ev.latlng;
+            var c = q.lat.toFixed(6) + ', ' + q.lng.toFixed(6);
+            l.bindPopup(
+              '<strong>' + t.tratta + '</strong><br>' + nomeClasse(cl) +
+              '<br><span style="font-family:monospace">' + c + '</span>' +
+              '<br><button onclick="navigator.clipboard.writeText(\'' + c + '\')">' +
+              'copia</button> ' +
+              '<a target="_blank" rel="noopener" href="https://www.google.com/maps' +
+              '?q=&layer=c&cbll=' + q.lat.toFixed(6) + ',' + q.lng.toFixed(6) +
+              '">vedi dalla strada</a>').openPopup(q);
+          });
         }
       }).addTo(mappa);
       strati.push(s);
@@ -218,6 +252,33 @@
     });
     if (tutti && tutti.isValid()) mappa.fitBounds(tutti, { padding: [20, 20] });
     setTimeout(function () { mappa.invalidateSize(); }, 200);
+  }
+
+  var linee = [];
+  function scala() {
+    var z = mappa.getZoom();
+    var vicino = z >= 13;
+    strati.forEach(function (s) {
+      if (vicino) { if (!mappa.hasLayer(s)) s.addTo(mappa); }
+      else if (mappa.hasLayer(s)) mappa.removeLayer(s);
+    });
+    linee.forEach(function (l) { mappa.removeLayer(l); });
+    linee = [];
+    if (vicino) return;
+    dati.tratte.forEach(function (t) {
+      if (!t._confini || !t._confini.isValid()) return;
+      var b = t._confini;
+      var q = t.celle ? t.senza_chioma / t.celle : 0;
+      var col = q >= 0.05 ? '#7b241c'
+              : (t.in_calo / (t.celle || 1)) >= 0.6 ? '#c0392b'
+              : (t.in_calo / (t.celle || 1)) >= 0.4 ? '#e67e22'
+              : (t.in_calo / (t.celle || 1)) >= 0.2 ? '#f1c40f' : '#27ae60';
+      var l = L.polyline([b.getSouthWest(), b.getNorthEast()],
+                         { color: col, weight: 5, opacity: 0.9 });
+      l.bindPopup('<strong>' + t.tratta + '</strong><br>' +
+                  t.celle + ' celle · ' + t.senza_chioma + ' con chioma assente');
+      l.addTo(mappa); linee.push(l);
+    });
   }
 
   var COLONNE = [
