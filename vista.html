@@ -180,9 +180,10 @@
        che si accende e si spegne: su una mappa gia' piena di celle, poter
        togliere le scritte aiuta. */
     var nomi = L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/' +
-      'World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 20, opacity: 0.9 }).addTo(mappa);
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/' +
+      '{z}/{x}/{y}{r}.png',
+      { maxZoom: 20, subdomains: 'abcd',
+        attribution: '&copy; OpenStreetMap, &copy; CARTO' }).addTo(mappa);
 
     L.control.layers(null, {
       'Nomi dei luoghi e confini': nomi
@@ -210,6 +211,7 @@
     mappa.on('zoomend', scala);
     celle();
     scala();
+    legenda();
   }
 
   /* I colori sono quelli delle classi del gradino, gli stessi che usa chi
@@ -297,8 +299,11 @@
           });
           if (co.length < 2) return;
           var l = L.polyline(co, { color: col, weight: 4, opacity: 0.95 });
-          l.bindPopup('<strong>' + t.tratta + '</strong><br>' + t.celle +
-                      ' celle \u00b7 ' + t.senza_chioma + ' con chioma assente');
+          l.bindPopup('<strong>' + t.tratta + '</strong><br>' +
+            ((!t.celle || t.celle < 150)
+              ? 'Non valutata come filare: ' + t.celle + ' celle \u2014 su questo ' +
+                'tratto il corridoio non presenta alberature continue.'
+              : t.celle + ' celle \u00b7 ' + t.senza_chioma + ' con chioma assente'));
           l.addTo(mappa); linee.push(l);
         });
       } else if (t._confini && t._confini.isValid()) {
@@ -310,15 +315,43 @@
     });
   }
 
-  /* il colore della tratta: prima la chioma assente, poi il calo */
+  /* IL COLORE DELLA TRATTA: prima la chioma assente, poi il calo.
+     E il GRIGIO per quello che non e' stato valutato: una strada che si
+     interrompe sulla mappa fa pensare a un errore. Meglio mostrarla tutta e
+     dire dove ci sono dati e dove no. */
   function colorePer(t) {
-    var q = t.celle ? t.senza_chioma / t.celle : 0;
-    var c = t.celle ? t.in_calo / t.celle : 0;
+    if (!t.celle || t.celle < 150) return '#9aa5a0';   /* non valutata */
+    var q = t.senza_chioma / t.celle;
+    var c = t.in_calo / t.celle;
     if (q >= 0.05) return '#7b241c';
     if (c >= 0.60) return '#c0392b';
     if (c >= 0.40) return '#e67e22';
     if (c >= 0.20) return '#f1c40f';
     return '#27ae60';
+  }
+
+  /* la legenda: senza, i colori non dicono niente a chi guarda */
+  function legenda() {
+    var l = L.control({ position: 'bottomright' });
+    l.onAdd = function () {
+      var d = L.DomUtil.create('div');
+      d.style.cssText = 'background:rgba(255,255,255,.9);padding:6px 10px;' +
+        'border-radius:6px;font-size:12px;line-height:1.5';
+      d.innerHTML =
+        v('#7b241c','chioma gi\u00e0 assente') +
+        v('#c0392b','in forte calo') +
+        v('#e67e22','in calo') +
+        v('#f1c40f','calo modesto') +
+        v('#27ae60','stabile') +
+        v('#9aa5a0','non valutata');
+      return d;
+      function v(c, t) {
+        return '<div><span style="display:inline-block;width:12px;height:12px;' +
+          'background:' + c + ';border-radius:2px;margin-right:6px;' +
+          'vertical-align:middle"></span>' + t + '</div>';
+      }
+    };
+    l.addTo(mappa);
   }
 
   var COLONNE = [
