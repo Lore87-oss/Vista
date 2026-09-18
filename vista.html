@@ -169,9 +169,24 @@
 
   function mappaSu() {
     mappa = L.map('mappa');
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' +
+    var sfondo = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/' +
       'World_Imagery/MapServer/tile/{z}/{y}/{x}',
       { maxZoom: 20, attribution: 'Esri' }).addTo(mappa);
+
+    /* I NOMI DEI LUOGHI SOPRA L'ORTOFOTO.
+       Senza, chi guarda vede quadratini colorati e non sa dove si trova.
+       E' uno strato sottile — solo etichette e confini, niente immagine —
+       che si accende e si spegne: su una mappa gia' piena di celle, poter
+       togliere le scritte aiuta. */
+    var nomi = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/' +
+      'World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 20, opacity: 0.9 }).addTo(mappa);
+
+    L.control.layers(null, {
+      'Nomi dei luoghi e confini': nomi
+    }, { collapsed: false, position: 'topright' }).addTo(mappa);
     mappa.setView([41.6, 12.9], 10);
 
     /* le coordinate sotto il puntatore, in un angolo */
