@@ -265,20 +265,45 @@
     linee.forEach(function (l) { mappa.removeLayer(l); });
     linee = [];
     if (vicino) return;
+
+    /* L'ASSE VERO, non la diagonale del riquadro.
+       La prima stesura tracciava una linea fra gli angoli del rettangolo di
+       ogni tratta: su una strada obliqua quella diagonale taglia di
+       traverso, e da lontano si vedevano trattini sparsi invece dell'Appia.
+       Qui si disegna il tracciato che sta nel database — quello corretto a
+       mano dove e' stato corretto — spezzone per spezzone. */
     dati.tratte.forEach(function (t) {
-      if (!t._confini || !t._confini.isValid()) return;
-      var b = t._confini;
-      var q = t.celle ? t.senza_chioma / t.celle : 0;
-      var col = q >= 0.05 ? '#7b241c'
-              : (t.in_calo / (t.celle || 1)) >= 0.6 ? '#c0392b'
-              : (t.in_calo / (t.celle || 1)) >= 0.4 ? '#e67e22'
-              : (t.in_calo / (t.celle || 1)) >= 0.2 ? '#f1c40f' : '#27ae60';
-      var l = L.polyline([b.getSouthWest(), b.getNorthEast()],
-                         { color: col, weight: 5, opacity: 0.9 });
-      l.bindPopup('<strong>' + t.tratta + '</strong><br>' +
-                  t.celle + ' celle · ' + t.senza_chioma + ' con chioma assente');
-      l.addTo(mappa); linee.push(l);
+      var col = colorePer(t);
+      var a = t.asse;
+      if (a && a.features && a.features.length) {
+        a.features.forEach(function (f) {
+          var co = (f.geometry.coordinates || []).map(function (q) {
+            return [q[1], q[0]];
+          });
+          if (co.length < 2) return;
+          var l = L.polyline(co, { color: col, weight: 4, opacity: 0.95 });
+          l.bindPopup('<strong>' + t.tratta + '</strong><br>' + t.celle +
+                      ' celle \u00b7 ' + t.senza_chioma + ' con chioma assente');
+          l.addTo(mappa); linee.push(l);
+        });
+      } else if (t._confini && t._confini.isValid()) {
+        var b = t._confini;
+        var l2 = L.polyline([b.getSouthWest(), b.getNorthEast()],
+                            { color: col, weight: 4, opacity: 0.6, dashArray: '6 4' });
+        l2.addTo(mappa); linee.push(l2);
+      }
     });
+  }
+
+  /* il colore della tratta: prima la chioma assente, poi il calo */
+  function colorePer(t) {
+    var q = t.celle ? t.senza_chioma / t.celle : 0;
+    var c = t.celle ? t.in_calo / t.celle : 0;
+    if (q >= 0.05) return '#7b241c';
+    if (c >= 0.60) return '#c0392b';
+    if (c >= 0.40) return '#e67e22';
+    if (c >= 0.20) return '#f1c40f';
+    return '#27ae60';
   }
 
   var COLONNE = [
